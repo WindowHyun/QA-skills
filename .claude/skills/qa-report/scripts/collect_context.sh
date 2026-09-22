@@ -62,6 +62,8 @@ fi
 
 if [ -z "$BASE" ]; then
   echo "비교 기준을 찾지 못했습니다. --base <ref> 로 지정하세요." >&2
+  echo "사용 가능한 후보:" >&2
+  git branch -a --format='  %(refname:short)' >&2
   exit 1
 fi
 
@@ -107,6 +109,20 @@ section "변경된 함수·심볼 후보"
 } | sort -u | head -60
 echo
 echo "  같은 이름이 [추가]/[삭제] 양쪽에 있으면 시그니처가 바뀐 것이다 — 기존 호출자를 반드시 확인한다."
+
+section "★ 삭제된 방어 코드 후보"
+cat <<'NOTE'
+  디프에서 사라진 검증·예외 처리·권한 검사다. 여기가 사고가 나는 자리다 —
+  추가된 코드는 리뷰에서 읽히지만, 삭제된 줄은 아무도 눈치채지 못한 채 통과한다.
+  각 줄에 대해 "왜 없어졌는가"를 커밋 메시지와 대조하고, 답이 없으면 리포트의
+  "조용히 같이 바뀐 것"에 올린다.
+NOTE
+echo
+git diff -U0 "$MERGE_BASE"...HEAD | grep -E '^-' | grep -vE '^---' \
+  | grep -iE '(if *\(|try *\{|catch|throw|assert|return (res|response)?\.?status\(4|return (res|response)?\.?status\(5|forbidden|unauthor|permission|valid|verify|check|guard|rollback|release|lock|transaction|require\(|401|403|409)' \
+  | sed -e 's/^-[[:space:]]*/  [삭제] /' | sort -u | head -40
+echo
+echo "  (아무것도 없으면 이번 디프에서 제거된 방어 코드가 없다는 뜻이다)"
 
 section "관련 테스트 파일 후보 (파일명 매칭)"
 printf '%s\n' "$SRC_FILES" | while IFS= read -r f; do
