@@ -98,25 +98,43 @@ done
 
 section "변경된 함수·심볼 후보"
 {
-  # 디프 훅 헤더의 함수 컨텍스트
-  git diff -U0 "$MERGE_BASE"...HEAD | grep -E '^@@.*@@ .+' | sed 's/^@@[^@]*@@ *//'
+  # 디프 훅 헤더의 함수 컨텍스트 (변경된 줄이 속한 함수)
+  git diff -U0 "$MERGE_BASE"...HEAD | grep -E '^@@.*@@ .+' | sed -e 's/^@@[^@]*@@ *//' -e 's/^/[문맥] /'
   # 추가·삭제된 정의부 (언어 무관 휴리스틱)
   git diff -U0 "$MERGE_BASE"...HEAD | grep -E '^[+-]' | grep -vE '^(\+\+\+|---)' \
-    | grep -E '(function |def |class |interface |type |struct |fun |func |const [A-Za-z_]+ *= *\(|=> *\{)'
-} | sed 's/^[+-]//' | sed 's/^[[:space:]]*//' | sort -u | head -60
+    | grep -E '(function |def |class |interface |type |struct |fun |func |const [A-Za-z_]+ *= *\(|=> *\{)' \
+    | sed -e 's/^+[[:space:]]*/[추가] /' -e 's/^-[[:space:]]*/[삭제] /'
+} | sort -u | head -60
+echo
+echo "  같은 이름이 [추가]/[삭제] 양쪽에 있으면 시그니처가 바뀐 것이다 — 기존 호출자를 반드시 확인한다."
 
 section "관련 테스트 파일 후보 (파일명 매칭)"
 printf '%s\n' "$SRC_FILES" | while IFS= read -r f; do
   [ -z "$f" ] && continue
   stem="$(basename "$f")"; stem="${stem%%.*}"
-  [ ${#stem} -lt 3 ] && continue
+  [ ${#stem} -lt 3 ] && { echo "[$f] -> (파일명이 짧아 매칭 생략)"; continue; }
   matches="$(git ls-files "*${stem}*" | while IFS= read -r c; do is_test_path "$c" && echo "$c"; done)"
-  [ -n "$matches" ] && { echo "[$f]"; printf '%s\n' "$matches" | sed 's/^/  /'; }
+  if [ -n "$matches" ]; then
+    echo "[$f]"; printf '%s\n' "$matches" | sed 's/^/  /'
+  else
+    echo "[$f] -> ★ 대응하는 테스트 파일 없음 (커버리지 공백 후보)"
+  fi
 done
+echo
+echo "  ★ 표시는 파일명 기준 추정이다. 실제 커버 여부는 테스트를 열어보고, 가능하면 실행해서 확인한다."
+
+section "테스트 실행 방법 후보"
+for f in package.json Makefile pyproject.toml go.mod build.gradle pom.xml Cargo.toml; do
+  [ -f "$f" ] && echo "발견: $f"
+done
+[ -f package.json ] && grep -A5 '"scripts"' package.json | head -10
 
 section "다음 할 일"
 cat <<'TIP'
 1) 위 소스 파일들을 직접 열어 진입점 / 데이터 흐름 / 분기 / 상태를 파악한다.
+   변경 파일이 호출하는 기존 파일도 한 걸음 더 들어가 본다 (호출 순서가 바뀌면 원래 있던 문제가 드러난다).
 2) 변경된 공개 심볼의 호출 지점을 grep 으로 찾아 회귀 영향 범위를 만든다.
 3) references/risk-checklist.md 를 코드에 대입해 실제 성립하는 위험만 추린다.
+4) 기존 테스트를 실행해 본다. P0 결함을 안고도 통과한다면 그 사실 자체가 리포트의 핵심 발견이다.
+5) 확신이 안 서는 가설은 스크래치 스크립트로 직접 호출해 실측한다 (저장소 코드는 수정하지 않는다).
 TIP
