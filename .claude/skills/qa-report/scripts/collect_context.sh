@@ -13,15 +13,23 @@ set -uo pipefail
 
 BASE=""
 TARGET_PATH=""
+REPO=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --base) BASE="${2:-}"; shift 2 ;;
     --path) TARGET_PATH="${2:-}"; shift 2 ;;
+    --repo) REPO="${2:-}"; shift 2 ;;
     -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
     *) echo "알 수 없는 옵션: $1" >&2; exit 1 ;;
   esac
 done
+
+if [ -n "$REPO" ]; then
+  cd "$REPO" || { echo "저장소 경로로 이동할 수 없습니다: $REPO" >&2; exit 1; }
+fi
+
+echo "분석 대상 저장소: $(pwd)"
 
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   echo "git 저장소가 아닙니다. --path 로 경로를 직접 지정해 분석하세요." >&2
@@ -67,7 +75,19 @@ if [ -z "$BASE" ]; then
   exit 1
 fi
 
-MERGE_BASE="$(git merge-base "$BASE" HEAD 2>/dev/null || echo "$BASE")"
+if ! git rev-parse --verify "${BASE}^{commit}" >/dev/null 2>&1; then
+  echo "비교 기준 '$BASE' 을 이 저장소에서 찾을 수 없습니다. 분석 대상 저장소가 맞는지 확인하세요." >&2
+  echo "현재 위치: $(pwd)" >&2
+  echo "사용 가능한 후보:" >&2
+  git branch -a --format='  %(refname:short)' >&2
+  exit 1
+fi
+
+MERGE_BASE="$(git merge-base "$BASE" HEAD 2>/dev/null || true)"
+if [ -z "$MERGE_BASE" ]; then
+  echo "'$BASE' 와 HEAD 의 공통 조상을 찾을 수 없습니다. 관련 없는 이력일 수 있습니다." >&2
+  exit 1
+fi
 
 section "비교 기준"
 echo "base : $BASE ($MERGE_BASE)"
@@ -118,9 +138,13 @@ cat <<'NOTE'
   "조용히 같이 바뀐 것"에 올린다.
 NOTE
 echo
-git diff -U0 "$MERGE_BASE"...HEAD | grep -E '^-' | grep -vE '^---' \
-  | grep -iE '(if *\(|try *\{|catch|throw|assert|return (res|response)?\.?status\(4|return (res|response)?\.?status\(5|forbidden|unauthor|permission|valid|verify|check|guard|rollback|release|lock|transaction|require\(|401|403|409)' \
-  | sed -e 's/^-[[:space:]]*/  [삭제] /' | sort -u | head -40
+git diff -U0 "$MERGE_BASE"...HEAD | awk '
+  /^--- a\// { oldfile = substr($0, 7); next }
+  /^\+\+\+ /  { next }
+  /^@@ /      { match($0, /-[0-9]+/); oldline = substr($0, RSTART + 1, RLENGTH - 1) + 0; next }
+  /^-/        { printf "  %s:%d  %s\n", oldfile, oldline, substr($0, 2); oldline++; next }
+' | grep -iE '(if *\(|try *\{|catch|throw|assert|return (res|response)?\.?status\(4|return (res|response)?\.?status\(5|forbidden|unauthor|permission|valid|verify|check|guard|rollback|release|lock|transaction|401|403|409)' \
+  | head -40
 echo
 echo "  (아무것도 없으면 이번 디프에서 제거된 방어 코드가 없다는 뜻이다)"
 
